@@ -9,7 +9,8 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import folium
-from folium.plugins import HeatMap, MarkerCluster, Fullscreen
+from folium.plugins import HeatMap
+from streamlit_folium import st_folium
 
 # =============================================================================
 # 1. KONFIGURASI HALAMAN
@@ -35,7 +36,6 @@ CARD_BG = "#FFFFFF"
 PAGE_BG = "#F8FAFC"
 
 SEQ_MIX = ["#4F46E5", "#0F172A", "#64748B", "#CBD5E1", "#E2E8F0"]
-
 DAY_ORDER_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 DAY_ID = {
     "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu", "Thursday": "Kamis",
@@ -91,28 +91,30 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# 3. FUNGSI LOAD DATA
+# 3. FUNGSI LOAD DATA (Anti-Error / Kebal NaT)
 # =============================================================================
 DATA_PATH = "data/la_crime_clean.parquet"
 
-@st.cache_data(show_spinner="Memuat dataset...")
+@st.cache_data(show_spinner="Memuat dan memvalidasi jutaan baris data...")
 def load_data(path: str = DATA_PATH) -> pd.DataFrame:
     df = pd.read_parquet(path)
 
-    if not pd.api.types.is_datetime64_any_dtype(df["occurrence_date"]):
-        df["occurrence_date"] = pd.to_datetime(df["occurrence_date"], errors="coerce")
+    # Amankan konversi datetime
+    df["occurrence_date"] = pd.to_datetime(df["occurrence_date"], errors="coerce")
     
     if "year" not in df.columns:
-        df["year"] = df["occurrence_date"].dt.year
-    if "hour" not in df.columns:
-        df["hour"] = pd.to_datetime(df["occurrence_time"], errors="coerce").dt.hour
+        df["year"] = df["occurrence_date"].dt.year.fillna(0).astype(int)
     if "day_of_week" not in df.columns:
         df["day_of_week"] = df["occurrence_date"].dt.day_name()
+    if "hour" not in df.columns:
+        df["occurrence_time"] = df["occurrence_time"].astype(str)
+        df["hour"] = df["occurrence_time"].str.extract(r'^(\d{1,2})')[0].astype(float)
 
-    df["month"] = df["occurrence_date"].values.astype("datetime64[M]")
+    # Ekstraksi bulan yang aman dari NaT
+    df["month"] = df["occurrence_date"].dt.strftime('%Y-%m')
     df["is_arrest"] = df["status"].isin(["Adult Arrest", "Juv Arrest"])
     
-    df["victim_age"] = df["victim_age"].fillna(0).astype(int)
+    df["victim_age"] = pd.to_numeric(df["victim_age"], errors="coerce").fillna(0).astype(int)
     df["age_group"] = pd.cut(
         df["victim_age"],
         bins=[0, 10, 18, 25, 35, 45, 55, 65, 120],
@@ -144,7 +146,7 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("**:material/calendar_month: TAHUN**")
-    available_years = sorted(df["year"].dropna().unique().tolist(), reverse=True)
+    available_years = sorted([y for y in df["year"].unique() if y > 0], reverse=True)
     selected_year = st.multiselect(
         "Tahun", options=available_years, default=available_years,
         key="flt_year", label_visibility="collapsed",
@@ -311,8 +313,9 @@ with tab1:
             heat_data = map_data[["latitude", "longitude"]].values.tolist()
             HeatMap(heat_data, radius=13, blur=12, gradient={0.4: PRIMARY, 0.65: WARNING, 1: DANGER}).add_to(heat_layer)
             heat_layer.add_to(m)
-            # Log Uvicorn terbaru menginstruksikan st.iframe menggantikan st.components.v1.html
-            st.iframe(html=m._repr_html_(), height=450)
+            
+            # Kembali menggunakan st_folium yang dijamin aman dan anti-kedip
+            st_folium(m, width="stretch", height=450, returned_objects=[])
     else:
         st.info("Data koordinat tidak tersedia.")
 
@@ -325,12 +328,8 @@ with tab2:
         section_intro("schedule", "Distribusi Jam")
         hour_data = filtered_df["hour"].dropna().value_counts().sort_index().reset_index()
         hour_data.columns = ["hour", "count"]
-        fig_hour = px.bar(hour_data, x="hour", y="count", color="count",
-                           color_continuous_scale="Blues")
-        fig_hour.update_layout(
-            xaxis_title="Jam (00–23)", yaxis_title="", template="plotly_white",
-            coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300,
-        )
+        fig_hour = px.bar(hour_data, x="hour", y="count", color="count", color_continuous_scale="Blues")
+        fig_hour.update_layout(xaxis_title="Jam (00–23)", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
         fig_hour.update_xaxes(dtick=2)
         st.plotly_chart(fig_hour, width="stretch")
 
@@ -346,7 +345,7 @@ with tab2:
     st.write("")
     section_intro("grid_on", "Intensitas Waktu", "Matriks jam kejadian versus hari.")
     pivot = filtered_df.pivot_table(index="day_of_week", columns="hour", values="report_number", aggfunc="count", fill_value=0).reindex(DAY_ORDER_EN)
-    pivot.index = [DAY_ID[d] for d in pivot.index]
+    pivot.index = [DAY_ID[d] if d in DAY_ID else d for d in pivot.index]
     fig_heat = px.imshow(pivot, color_continuous_scale="gray", aspect="auto", labels=dict(x="Jam", y="Hari", color="Insiden"))
     fig_heat.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
     st.plotly_chart(fig_heat, width="stretch")
@@ -429,9 +428,9 @@ with tab4:
 # ------------------------- TAB 5: DATA TABEL --------------------------------
 with tab5:
     st.write("")
-    section_intro("dataset", "Eksplorasi Data Tabular", "Gunakan kata kunci untuk menelusuri modus kejahatan secara spesifik.")
+    section_intro("dataset", "Eksplorasi Data Tabular", "Menampilkan maksimal 5.000 baris terbaru untuk mencegah crash pada browser.")
 
-    keyword = st.text_input("Pencarian Modus:", placeholder="Ketik kata kunci...")
+    keyword = st.text_input("Pencarian Modus:", placeholder="Ketik kata kunci (misal: theft, assault)...")
     table_df = filtered_df
     if keyword:
         table_df = table_df[table_df["crime"].str.contains(keyword, case=False, na=False)]
@@ -440,14 +439,17 @@ with tab5:
         "report_number", "occurrence_date", "area", "crime_category", "crime",
         "victim_age", "victim_gender", "victim_ethnicity", "premise", "weapon", "status",
     ]
+    
+    # PROTEKSI OUT OF MEMORY: Hanya render 5000 baris ke layar browser
     st.dataframe(
-        table_df[display_cols].sort_values("occurrence_date", ascending=False),
+        table_df[display_cols].sort_values("occurrence_date", ascending=False).head(5000),
         width="stretch", hide_index=True, height=400,
     )
 
+    # Tetapi user tetap bisa mengunduh 100% datanya
     csv_bytes = to_csv_bytes(table_df[display_cols])
     st.download_button(
-        "Unduh CSV", data=csv_bytes,
+        "Unduh CSV (Full Data)", data=csv_bytes,
         file_name="la_crime_export.csv", mime="text/csv",
         type="primary", icon=":material/download:"
     )
