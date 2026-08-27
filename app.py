@@ -10,12 +10,10 @@ import numpy as np
 import plotly.express as px
 import folium
 from folium.plugins import HeatMap, MarkerCluster, Fullscreen
-import streamlit.components.v1 as components
 
 # =============================================================================
 # 1. KONFIGURASI HALAMAN
 # =============================================================================
-# Menggunakan built-in icon material dari Streamlit
 st.set_page_config(
     page_title="LA Crime Intelligence",
     page_icon=":material/local_police:", 
@@ -24,15 +22,15 @@ st.set_page_config(
 )
 
 # =============================================================================
-# 2. TEMA WARNA & CUSTOM CSS (MINIMALIS DENGAN MATERIAL SYMBOLS)
+# 2. TEMA WARNA & CUSTOM CSS
 # =============================================================================
-PRIMARY = "#0F172A"     # Slate 900
-ACCENT = "#4F46E5"      # Indigo 600
-DANGER = "#E11D48"      # Rose 600
-SUCCESS = "#059669"     # Emerald 600
-WARNING = "#D97706"     # Amber 600
-MUTED = "#64748B"       # Slate 500
-BORDER = "#E2E8F0"      # Slate 200
+PRIMARY = "#0F172A"     
+ACCENT = "#4F46E5"      
+DANGER = "#E11D48"      
+SUCCESS = "#059669"     
+WARNING = "#D97706"     
+MUTED = "#64748B"       
+BORDER = "#E2E8F0"      
 CARD_BG = "#FFFFFF"
 PAGE_BG = "#F8FAFC"
 
@@ -44,7 +42,6 @@ DAY_ID = {
     "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu",
 }
 
-# Import font Material Symbols Outlined dari Google Fonts untuk ikon custom HTML
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0');
@@ -183,7 +180,7 @@ with st.sidebar:
         )
 
     st.markdown("---")
-    st.button("Reset Filter", use_container_width=True, on_click=reset_filters)
+    st.button("Reset Filter", width="stretch", on_click=reset_filters)
 
 # Terapkan filter
 filtered_df = df
@@ -258,7 +255,6 @@ top_area_n = top_area_counts.iloc[0] if not top_area_counts.empty else 0
 avg_age = filtered_df["victim_age"].mean()
 
 k1, k2, k3, k4, k5, k6 = st.columns(6)
-# Memasukkan nama ikon Google Material Symbols (contoh: 'monitoring', 'warning', 'gavel')
 kpi_card(k1, "monitoring", "Total Insiden", f"{total_crimes:,}", color=PRIMARY)
 kpi_card(k2, "warning", "Insiden Serius", f"{serious_pct:.1f}%", "Rasio terhadap total", color=DANGER)
 kpi_card(k3, "gavel", "Penangkapan", f"{arrest_pct:.1f}%", "Kasus terselesaikan", color=SUCCESS)
@@ -271,7 +267,6 @@ st.write("")
 # =============================================================================
 # 8. TABS
 # =============================================================================
-# Menggunakan Native Material Icon bawaan Streamlit untuk nama Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     ":material/explore: PETA & OVERVIEW",
     ":material/schedule: ANALISIS WAKTU",
@@ -291,7 +286,7 @@ with tab1:
         fig_trend = px.area(trend_data, x="year", y="count", markers=True, color_discrete_sequence=[PRIMARY])
         fig_trend.update_traces(line=dict(width=2), fillcolor="rgba(15, 23, 42, 0.05)")
         fig_trend.update_layout(xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), xaxis=dict(dtick=1), height=300)
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.plotly_chart(fig_trend, width="stretch")
 
     with col_chart2:
         section_intro("bar_chart", "Distribusi Area (Top 10)")
@@ -300,7 +295,7 @@ with tab1:
         fig_area = px.bar(area_data, x="count", y="area", orientation="h", color="count", color_continuous_scale="gray", text="count")
         fig_area.update_traces(texttemplate="%{text:,}", textposition="outside", marker_line_width=0)
         fig_area.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
-        st.plotly_chart(fig_area, use_container_width=True)
+        st.plotly_chart(fig_area, width="stretch")
 
     st.write("")
     section_intro("public", "Kepadatan Insiden Geospasial", "Heatmap distribusi kejahatan. Render maksimal 10.000 titik sampel.")
@@ -316,7 +311,8 @@ with tab1:
             heat_data = map_data[["latitude", "longitude"]].values.tolist()
             HeatMap(heat_data, radius=13, blur=12, gradient={0.4: PRIMARY, 0.65: WARNING, 1: DANGER}).add_to(heat_layer)
             heat_layer.add_to(m)
-            components.html(m._repr_html_(), height=450)
+            # Log Uvicorn terbaru menginstruksikan st.iframe menggantikan st.components.v1.html
+            st.iframe(html=m._repr_html_(), height=450)
     else:
         st.info("Data koordinat tidak tersedia.")
 
@@ -336,7 +332,7 @@ with tab2:
             coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300,
         )
         fig_hour.update_xaxes(dtick=2)
-        st.plotly_chart(fig_hour, use_container_width=True)
+        st.plotly_chart(fig_hour, width="stretch")
 
     with col_time2:
         section_intro("event", "Distribusi Hari")
@@ -345,7 +341,7 @@ with tab2:
         day_data["day_id"] = day_data["day"].map(DAY_ID)
         fig_day = px.bar(day_data, x="day_id", y="count", color_discrete_sequence=[MUTED])
         fig_day.update_layout(xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-        st.plotly_chart(fig_day, use_container_width=True)
+        st.plotly_chart(fig_day, width="stretch")
 
     st.write("")
     section_intro("grid_on", "Intensitas Waktu", "Matriks jam kejadian versus hari.")
@@ -353,7 +349,7 @@ with tab2:
     pivot.index = [DAY_ID[d] for d in pivot.index]
     fig_heat = px.imshow(pivot, color_continuous_scale="gray", aspect="auto", labels=dict(x="Jam", y="Hari", color="Insiden"))
     fig_heat.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width="stretch")
 
 # ------------------------- TAB 3: DEMOGRAFI ---------------------------------
 with tab3:
@@ -371,7 +367,7 @@ with tab3:
             fig_gender = px.pie(gender_counts, names="gender", values="count", hole=0.6, color_discrete_sequence=[PRIMARY, BORDER])
             fig_gender.update_traces(textinfo="percent", hoverinfo="label+value")
             fig_gender.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
-            st.plotly_chart(fig_gender, use_container_width=True)
+            st.plotly_chart(fig_gender, width="stretch")
         else:
             st.info("Data gender tidak tersedia.")
 
@@ -381,7 +377,7 @@ with tab3:
         age_grp.columns = ["group", "count"]
         fig_age = px.bar(age_grp, x="group", y="count", color_discrete_sequence=[ACCENT])
         fig_age.update_layout(xaxis_title="Rentang Usia", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-        st.plotly_chart(fig_age, use_container_width=True)
+        st.plotly_chart(fig_age, width="stretch")
 
     st.write("")
     section_intro("groups", "Profil Etnisitas (Top 10)")
@@ -389,7 +385,7 @@ with tab3:
     eth_data.columns = ["ethnicity", "count"]
     fig_eth = px.bar(eth_data, x="count", y="ethnicity", orientation="h", color="count", color_continuous_scale="gray")
     fig_eth.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
-    st.plotly_chart(fig_eth, use_container_width=True)
+    st.plotly_chart(fig_eth, width="stretch")
 
 # ------------------------- TAB 4: ATRIBUT KASUS -----------------------------
 with tab4:
@@ -407,7 +403,7 @@ with tab4:
         weapon_data.columns = ["weapon", "count"]
         fig_weapon = px.bar(weapon_data, x="count", y="weapon", orientation="h", color_discrete_sequence=[PRIMARY])
         fig_weapon.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=320)
-        st.plotly_chart(fig_weapon, use_container_width=True)
+        st.plotly_chart(fig_weapon, width="stretch")
 
     with col_w2:
         section_intro("task_alt", "Status Resolusi")
@@ -420,7 +416,7 @@ with tab4:
         status_data.columns = ["status", "count"]
         fig_status = px.pie(status_data, names="status", values="count", hole=0.6, color_discrete_sequence=SEQ_MIX)
         fig_status.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=320, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
-        st.plotly_chart(fig_status, use_container_width=True)
+        st.plotly_chart(fig_status, width="stretch")
 
     st.write("")
     section_intro("store", "Konteks Ruang (Premise)")
@@ -428,7 +424,7 @@ with tab4:
     premise_data.columns = ["premise", "count"]
     fig_premise = px.bar(premise_data, x="count", y="premise", orientation="h", color_discrete_sequence=[MUTED])
     fig_premise.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-    st.plotly_chart(fig_premise, use_container_width=True)
+    st.plotly_chart(fig_premise, width="stretch")
 
 # ------------------------- TAB 5: DATA TABEL --------------------------------
 with tab5:
@@ -446,7 +442,7 @@ with tab5:
     ]
     st.dataframe(
         table_df[display_cols].sort_values("occurrence_date", ascending=False),
-        use_container_width=True, hide_index=True, height=400,
+        width="stretch", hide_index=True, height=400,
     )
 
     csv_bytes = to_csv_bytes(table_df[display_cols])
