@@ -288,7 +288,7 @@ with tab1:
             map_data = map_data.sample(1000, random_state=42)
 
         with st.spinner("Memuat peta spasial..."):
-            m = folium.Map(location=[34.0522, -118.2437], zoom_start=10, tiles="CartoDB Positron")
+            m = folium.Map(location=[34.0522, -118.2437], zoom_start=10, tiles="OpenStreetMap")
             heat_data = map_data[["latitude", "longitude"]].values.tolist()
             HeatMap(heat_data, radius=13, blur=12, gradient={0.4: PRIMARY, 0.65: WARNING, 1: DANGER}).add_to(m)
             
