@@ -1,7 +1,7 @@
 """
 LA Crime Intelligence Dashboard
 ================================
-Dashboard interaktif untuk eksplorasi data kejahatan di Los Angeles (2020-2025).
+Versi: Ultra-Optimized Memory (Anti-OOM)
 """
 
 import streamlit as st
@@ -10,7 +10,8 @@ import numpy as np
 import plotly.express as px
 import folium
 from folium.plugins import HeatMap
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
+import gc  # Garbage Collector untuk mengosongkan RAM
 
 # =============================================================================
 # 1. KONFIGURASI HALAMAN
@@ -51,27 +52,13 @@ st.markdown(f"""
     .block-container {{ padding-top: 2rem; padding-bottom: 2rem; max-width: 1400px; }}
     h1, h2, h3, h4 {{ color: {PRIMARY}; font-weight: 600; letter-spacing: -0.02em; }}
 
-    .dash-header {{
-        border-bottom: 2px solid {PRIMARY};
-        padding-bottom: 12px; margin-bottom: 24px;
-        display: flex; align-items: center; gap: 12px;
-    }}
+    .dash-header {{ border-bottom: 2px solid {PRIMARY}; padding-bottom: 12px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px; }}
     .dash-header-icon {{ font-size: 36px; color: {PRIMARY}; }}
     .dash-header h1 {{ color: {PRIMARY}; margin: 0; font-size: 26px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1; }}
     .dash-header p {{ color: {MUTED}; margin: 4px 0 0 0; font-size: 14px; }}
 
-    .kpi-card {{
-        background: {CARD_BG}; 
-        border: 1px solid {BORDER};
-        border-top: 3px solid var(--kpi-color, {ACCENT});
-        padding: 16px 20px; height: 100%; border-radius: 4px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-    }}
-    .kpi-label {{
-        font-size: 12px; color: {MUTED}; font-weight: 600;
-        text-transform: uppercase; letter-spacing: 0.05em;
-        display: flex; align-items: center; gap: 6px;
-    }}
+    .kpi-card {{ background: {CARD_BG}; border: 1px solid {BORDER}; border-top: 3px solid var(--kpi-color, {ACCENT}); padding: 16px 20px; height: 100%; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }}
+    .kpi-label {{ font-size: 12px; color: {MUTED}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: 6px; }}
     .kpi-icon {{ font-size: 16px; color: var(--kpi-color, {ACCENT}); }}
     .kpi-value {{ font-size: 24px; color: {PRIMARY}; font-weight: 700; margin-top: 8px; line-height: 1.1; }}
     .kpi-sub {{ font-size: 12px; color: {MUTED}; margin-top: 4px; }}
@@ -80,46 +67,46 @@ st.markdown(f"""
     .section-caption {{ font-size: 13px; color: {MUTED}; margin-bottom: 16px; }}
 
     .stTabs [data-baseweb="tab-list"] {{ gap: 24px; border-bottom: 1px solid {BORDER}; }}
-    .stTabs [data-baseweb="tab"] {{
-        background-color: transparent; border: none; padding: 12px 4px;
-        color: {MUTED}; font-weight: 500; font-size: 14px;
-    }}
+    .stTabs [data-baseweb="tab"] {{ background-color: transparent; border: none; padding: 12px 4px; color: {MUTED}; font-weight: 500; font-size: 14px; }}
     .stTabs [aria-selected="true"] {{ color: {ACCENT} !important; border-bottom: 2px solid {ACCENT} !important; }}
-
-    section[data-testid="stSidebar"] {{ background-color: {CARD_BG}; border-right: 1px solid {BORDER}; }}
 </style>
 """, unsafe_allow_html=True)
 
 # =============================================================================
-# 3. FUNGSI LOAD DATA (Anti-Error / Kebal NaT)
+# 3. FUNGSI LOAD DATA (DIET MEMORI EKSTREM)
 # =============================================================================
 DATA_PATH = "data/la_crime_clean.parquet"
 
-@st.cache_data(show_spinner="Memuat dan memvalidasi jutaan baris data...")
+@st.cache_data(show_spinner="Memuat dataset & optimasi memori...")
 def load_data(path: str = DATA_PATH) -> pd.DataFrame:
     df = pd.read_parquet(path)
 
-    # Amankan konversi datetime
-    df["occurrence_date"] = pd.to_datetime(df["occurrence_date"], errors="coerce")
+    # 1. Konversi Tanggal dan Waktu (Downcast tipe data)
+    if not pd.api.types.is_datetime64_any_dtype(df["occurrence_date"]):
+        df["occurrence_date"] = pd.to_datetime(df["occurrence_date"], errors="coerce")
     
     if "year" not in df.columns:
-        df["year"] = df["occurrence_date"].dt.year.fillna(0).astype(int)
+        df["year"] = df["occurrence_date"].dt.year.fillna(0).astype("int16")
     if "day_of_week" not in df.columns:
         df["day_of_week"] = df["occurrence_date"].dt.day_name()
     if "hour" not in df.columns:
         df["occurrence_time"] = df["occurrence_time"].astype(str)
         df["hour"] = df["occurrence_time"].str.extract(r'^(\d{1,2})')[0].astype(float)
 
-    # Ekstraksi bulan yang aman dari NaT
-    df["month"] = df["occurrence_date"].dt.strftime('%Y-%m')
     df["is_arrest"] = df["status"].isin(["Adult Arrest", "Juv Arrest"])
-    
-    df["victim_age"] = pd.to_numeric(df["victim_age"], errors="coerce").fillna(0).astype(int)
+    df["victim_age"] = pd.to_numeric(df["victim_age"], errors="coerce").fillna(0).astype("int16")
     df["age_group"] = pd.cut(
         df["victim_age"],
         bins=[0, 10, 18, 25, 35, 45, 55, 65, 120],
         labels=["0-10", "11-18", "19-25", "26-35", "36-45", "46-55", "56-65", "65+"],
     )
+    
+    # 2. OPTIMASI RAM: Ubah tipe data teks menjadi kategori
+    cat_cols = ["area", "crime_category", "crime", "victim_gender", "victim_ethnicity", "premise", "weapon", "status", "day_of_week"]
+    for col in cat_cols:
+        if col in df.columns:
+            df[col] = df[col].astype("category")
+
     return df
 
 @st.cache_data
@@ -133,7 +120,7 @@ except FileNotFoundError:
     st.stop()
 
 # =============================================================================
-# 4. SIDEBAR — FILTER
+# 4. SIDEBAR — FILTER MENGGUNAKAN BOOLEAN MASKING (ANTI-COPY RAM)
 # =============================================================================
 FILTER_KEYS = ["flt_year", "flt_area", "flt_category", "flt_days", "flt_hour", "flt_crimes"]
 
@@ -147,56 +134,47 @@ with st.sidebar:
 
     st.markdown("**:material/calendar_month: TAHUN**")
     available_years = sorted([y for y in df["year"].unique() if y > 0], reverse=True)
-    selected_year = st.multiselect(
-        "Tahun", options=available_years, default=available_years,
-        key="flt_year", label_visibility="collapsed",
-    )
+    selected_year = st.multiselect("Tahun", options=available_years, default=available_years, key="flt_year", label_visibility="collapsed")
 
     st.markdown("**:material/location_on: AREA**")
     available_areas = sorted(df["area"].dropna().unique().tolist())
-    selected_area = st.multiselect(
-        "Area", options=available_areas, default=[], key="flt_area",
-        label_visibility="collapsed", placeholder="Semua area",
-    )
+    selected_area = st.multiselect("Area", options=available_areas, default=[], key="flt_area", label_visibility="collapsed", placeholder="Semua area")
 
     st.markdown("**:material/category: KATEGORI**")
     category_options = sorted(df["crime_category"].dropna().unique().tolist())
-    selected_category = st.multiselect(
-        "Kategori", options=category_options, default=category_options,
-        key="flt_category", label_visibility="collapsed",
-    )
+    selected_category = st.multiselect("Kategori", options=category_options, default=category_options, key="flt_category", label_visibility="collapsed")
 
     st.markdown("---")
     with st.expander("FILTER LANJUTAN"):
-        selected_days = st.multiselect(
-            "HARI", options=DAY_ORDER_EN, default=[],
-            format_func=lambda d: DAY_ID[d], key="flt_days",
-            placeholder="Semua hari",
-        )
+        selected_days = st.multiselect("HARI", options=DAY_ORDER_EN, default=[], format_func=lambda d: DAY_ID[d], key="flt_days", placeholder="Semua hari")
         hour_range = st.slider("RENTANG JAM", 0, 23, (0, 23), key="flt_hour")
-
         top_crime_options = sorted(df["crime"].value_counts().head(40).index.tolist())
-        selected_crimes = st.multiselect(
-            "MODUS (40 TERATAS)", options=top_crime_options,
-            default=[], key="flt_crimes", placeholder="Semua modus",
-        )
+        selected_crimes = st.multiselect("MODUS (40 TERATAS)", options=top_crime_options, default=[], key="flt_crimes", placeholder="Semua modus")
 
     st.markdown("---")
-    st.button("Reset Filter", width="stretch", on_click=reset_filters)
+    st.button("Reset Filter", use_container_width=True, on_click=reset_filters)
 
-# Terapkan filter
-filtered_df = df
+# TEKNIK BOOLEAN MASKING: Filter tanpa menduplikasi data
+mask = pd.Series(True, index=df.index)
+
 if selected_year:
-    filtered_df = filtered_df[filtered_df["year"].isin(selected_year)]
+    mask &= df["year"].isin(selected_year)
 if selected_area:
-    filtered_df = filtered_df[filtered_df["area"].isin(selected_area)]
+    mask &= df["area"].isin(selected_area)
 if selected_category:
-    filtered_df = filtered_df[filtered_df["crime_category"].isin(selected_category)]
+    mask &= df["crime_category"].isin(selected_category)
 if selected_days:
-    filtered_df = filtered_df[filtered_df["day_of_week"].isin(selected_days)]
-filtered_df = filtered_df[filtered_df["hour"].between(hour_range[0], hour_range[1])]
+    mask &= df["day_of_week"].isin(selected_days)
+mask &= df["hour"].between(hour_range[0], hour_range[1])
 if selected_crimes:
-    filtered_df = filtered_df[filtered_df["crime"].isin(selected_crimes)]
+    mask &= df["crime"].isin(selected_crimes)
+
+# Terapkan filter HANYA SEKALI
+filtered_df = df[mask]
+
+# Bersihkan memori sisa pembuatan mask
+del mask
+gc.collect()
 
 st.sidebar.caption(
     f"SAMPEL DATA: **{len(filtered_df):,}** / **{len(df):,}** "
@@ -225,9 +203,7 @@ def kpi_card(col, icon: str, label: str, value: str, sub: str = "", color: str =
     sub_html = f'<div class="kpi-sub">{sub}</div>' if sub else ""
     col.markdown(f"""
     <div class="kpi-card" style="--kpi-color:{color}">
-        <div class="kpi-label">
-            <span class="material-symbols-outlined kpi-icon">{icon}</span> {label}
-        </div>
+        <div class="kpi-label"><span class="material-symbols-outlined kpi-icon">{icon}</span> {label}</div>
         <div class="kpi-value">{value}</div>
         {sub_html}
     </div>
@@ -248,20 +224,23 @@ if filtered_df.empty:
 total_crimes = len(filtered_df)
 serious_pct = (filtered_df["crime_category"] == "Serious Crime").mean() * 100
 arrest_pct = filtered_df["is_arrest"].mean() * 100
-top_crime_counts = filtered_df["crime"].value_counts()
-top_crime = top_crime_counts.index[0] if not top_crime_counts.empty else "N/A"
-top_crime_n = top_crime_counts.iloc[0] if not top_crime_counts.empty else 0
-top_area_counts = filtered_df["area"].value_counts()
-top_area = top_area_counts.index[0] if not top_area_counts.empty else "N/A"
-top_area_n = top_area_counts.iloc[0] if not top_area_counts.empty else 0
+
+crime_counts = filtered_df["crime"].value_counts()
+top_crime = crime_counts.index[0] if len(crime_counts) > 0 else "N/A"
+top_crime_n = crime_counts.iloc[0] if len(crime_counts) > 0 else 0
+
+area_counts = filtered_df["area"].value_counts()
+top_area = area_counts.index[0] if len(area_counts) > 0 else "N/A"
+top_area_n = area_counts.iloc[0] if len(area_counts) > 0 else 0
+
 avg_age = filtered_df["victim_age"].mean()
 
 k1, k2, k3, k4, k5, k6 = st.columns(6)
 kpi_card(k1, "monitoring", "Total Insiden", f"{total_crimes:,}", color=PRIMARY)
 kpi_card(k2, "warning", "Insiden Serius", f"{serious_pct:.1f}%", "Rasio terhadap total", color=DANGER)
 kpi_card(k3, "gavel", "Penangkapan", f"{arrest_pct:.1f}%", "Kasus terselesaikan", color=SUCCESS)
-kpi_card(k4, "fingerprint", "Modus Dominan", top_crime.title()[:22] + ("…" if len(top_crime) > 22 else ""), f"{top_crime_n:,} laporan", color=WARNING)
-kpi_card(k5, "map", "Area Rawan", top_area, f"{top_area_n:,} laporan", color=ACCENT)
+kpi_card(k4, "fingerprint", "Modus Dominan", str(top_crime).title()[:22] + ("…" if len(str(top_crime)) > 22 else ""), f"{top_crime_n:,} laporan", color=WARNING)
+kpi_card(k5, "map", "Area Rawan", str(top_area), f"{top_area_n:,} laporan", color=ACCENT)
 kpi_card(k6, "person", "Usia Rata-rata", f"{avg_age:.0f} Thn", "Demografi korban", color=MUTED)
 
 st.write("")
@@ -288,7 +267,7 @@ with tab1:
         fig_trend = px.area(trend_data, x="year", y="count", markers=True, color_discrete_sequence=[PRIMARY])
         fig_trend.update_traces(line=dict(width=2), fillcolor="rgba(15, 23, 42, 0.05)")
         fig_trend.update_layout(xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), xaxis=dict(dtick=1), height=300)
-        st.plotly_chart(fig_trend, width="stretch")
+        st.plotly_chart(fig_trend, use_container_width=True)
 
     with col_chart2:
         section_intro("bar_chart", "Distribusi Area (Top 10)")
@@ -297,25 +276,27 @@ with tab1:
         fig_area = px.bar(area_data, x="count", y="area", orientation="h", color="count", color_continuous_scale="gray", text="count")
         fig_area.update_traces(texttemplate="%{text:,}", textposition="outside", marker_line_width=0)
         fig_area.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
-        st.plotly_chart(fig_area, width="stretch")
+        st.plotly_chart(fig_area, use_container_width=True)
 
     st.write("")
-    section_intro("public", "Kepadatan Insiden Geospasial", "Heatmap distribusi kejahatan. Render maksimal 10.000 titik sampel.")
+    # PENTING: Sampel dikurangi jadi 1000 agar render peta tidak memakan RAM berlebih
+    section_intro("public", "Kepadatan Insiden Geospasial", "Heatmap distribusi (Maks 1.000 titik sampel agar peta tetap stabil)")
     map_data = filtered_df.dropna(subset=["latitude", "longitude"])
 
     if not map_data.empty:
-        if len(map_data) > 10000:
-            map_data = map_data.sample(10000, random_state=42)
+        if len(map_data) > 1000:
+            map_data = map_data.sample(1000, random_state=42)
 
         with st.spinner("Memuat peta spasial..."):
             m = folium.Map(location=[34.0522, -118.2437], zoom_start=10, tiles="CartoDB Positron")
-            heat_layer = folium.FeatureGroup(name="Density Heatmap", show=True)
             heat_data = map_data[["latitude", "longitude"]].values.tolist()
-            HeatMap(heat_data, radius=13, blur=12, gradient={0.4: PRIMARY, 0.65: WARNING, 1: DANGER}).add_to(heat_layer)
-            heat_layer.add_to(m)
+            HeatMap(heat_data, radius=13, blur=12, gradient={0.4: PRIMARY, 0.65: WARNING, 1: DANGER}).add_to(m)
             
-            # Kembali menggunakan st_folium yang dijamin aman dan anti-kedip
-            st_folium(m, width="stretch", height=450, returned_objects=[])
+            components.html(m._repr_html_(), height=450)
+            
+            # Bersihkan memori peta
+            del m, heat_data, map_data
+            gc.collect()
     else:
         st.info("Data koordinat tidak tersedia.")
 
@@ -331,7 +312,7 @@ with tab2:
         fig_hour = px.bar(hour_data, x="hour", y="count", color="count", color_continuous_scale="Blues")
         fig_hour.update_layout(xaxis_title="Jam (00–23)", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
         fig_hour.update_xaxes(dtick=2)
-        st.plotly_chart(fig_hour, width="stretch")
+        st.plotly_chart(fig_hour, use_container_width=True)
 
     with col_time2:
         section_intro("event", "Distribusi Hari")
@@ -340,7 +321,7 @@ with tab2:
         day_data["day_id"] = day_data["day"].map(DAY_ID)
         fig_day = px.bar(day_data, x="day_id", y="count", color_discrete_sequence=[MUTED])
         fig_day.update_layout(xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-        st.plotly_chart(fig_day, width="stretch")
+        st.plotly_chart(fig_day, use_container_width=True)
 
     st.write("")
     section_intro("grid_on", "Intensitas Waktu", "Matriks jam kejadian versus hari.")
@@ -348,7 +329,7 @@ with tab2:
     pivot.index = [DAY_ID[d] if d in DAY_ID else d for d in pivot.index]
     fig_heat = px.imshow(pivot, color_continuous_scale="gray", aspect="auto", labels=dict(x="Jam", y="Hari", color="Insiden"))
     fig_heat.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-    st.plotly_chart(fig_heat, width="stretch")
+    st.plotly_chart(fig_heat, use_container_width=True)
 
 # ------------------------- TAB 3: DEMOGRAFI ---------------------------------
 with tab3:
@@ -366,7 +347,7 @@ with tab3:
             fig_gender = px.pie(gender_counts, names="gender", values="count", hole=0.6, color_discrete_sequence=[PRIMARY, BORDER])
             fig_gender.update_traces(textinfo="percent", hoverinfo="label+value")
             fig_gender.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
-            st.plotly_chart(fig_gender, width="stretch")
+            st.plotly_chart(fig_gender, use_container_width=True)
         else:
             st.info("Data gender tidak tersedia.")
 
@@ -376,15 +357,17 @@ with tab3:
         age_grp.columns = ["group", "count"]
         fig_age = px.bar(age_grp, x="group", y="count", color_discrete_sequence=[ACCENT])
         fig_age.update_layout(xaxis_title="Rentang Usia", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-        st.plotly_chart(fig_age, width="stretch")
+        st.plotly_chart(fig_age, use_container_width=True)
 
     st.write("")
     section_intro("groups", "Profil Etnisitas (Top 10)")
-    eth_data = filtered_df[~filtered_df["victim_ethnicity"].isin(["Unknown"])]["victim_ethnicity"].value_counts().head(10).reset_index()
+    eth_data = filtered_df["victim_ethnicity"].value_counts().reset_index()
     eth_data.columns = ["ethnicity", "count"]
+    eth_data = eth_data[eth_data["ethnicity"] != "Unknown"].head(10)
+    
     fig_eth = px.bar(eth_data, x="count", y="ethnicity", orientation="h", color="count", color_continuous_scale="gray")
     fig_eth.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
-    st.plotly_chart(fig_eth, width="stretch")
+    st.plotly_chart(fig_eth, use_container_width=True)
 
 # ------------------------- TAB 4: ATRIBUT KASUS -----------------------------
 with tab4:
@@ -395,14 +378,14 @@ with tab4:
 
     with col_w1:
         section_intro("hardware", "Instrumen Senjata (Top 10)")
-        weapon_series = filtered_df["weapon"]
-        if hide_unknown_weapon:
-            weapon_series = weapon_series[~weapon_series.str.contains("UNKNOWN", case=False, na=False)]
-        weapon_data = weapon_series.value_counts().head(10).reset_index()
+        weapon_data = filtered_df["weapon"].value_counts().reset_index()
         weapon_data.columns = ["weapon", "count"]
-        fig_weapon = px.bar(weapon_data, x="count", y="weapon", orientation="h", color_discrete_sequence=[PRIMARY])
+        if hide_unknown_weapon:
+            weapon_data = weapon_data[~weapon_data["weapon"].astype(str).str.contains("UNKNOWN", case=False, na=False)]
+            
+        fig_weapon = px.bar(weapon_data.head(10), x="count", y="weapon", orientation="h", color_discrete_sequence=[PRIMARY])
         fig_weapon.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=320)
-        st.plotly_chart(fig_weapon, width="stretch")
+        st.plotly_chart(fig_weapon, use_container_width=True)
 
     with col_w2:
         section_intro("task_alt", "Status Resolusi")
@@ -415,7 +398,7 @@ with tab4:
         status_data.columns = ["status", "count"]
         fig_status = px.pie(status_data, names="status", values="count", hole=0.6, color_discrete_sequence=SEQ_MIX)
         fig_status.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=320, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
-        st.plotly_chart(fig_status, width="stretch")
+        st.plotly_chart(fig_status, use_container_width=True)
 
     st.write("")
     section_intro("store", "Konteks Ruang (Premise)")
@@ -423,30 +406,32 @@ with tab4:
     premise_data.columns = ["premise", "count"]
     fig_premise = px.bar(premise_data, x="count", y="premise", orientation="h", color_discrete_sequence=[MUTED])
     fig_premise.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
-    st.plotly_chart(fig_premise, width="stretch")
+    st.plotly_chart(fig_premise, use_container_width=True)
 
 # ------------------------- TAB 5: DATA TABEL --------------------------------
 with tab5:
     st.write("")
-    section_intro("dataset", "Eksplorasi Data Tabular", "Menampilkan maksimal 5.000 baris terbaru untuk mencegah crash pada browser.")
+    section_intro("dataset", "Eksplorasi Data Tabular", "Menampilkan data terbaru. Ketik di bawah ini untuk memfilter spesifik.")
 
     keyword = st.text_input("Pencarian Modus:", placeholder="Ketik kata kunci (misal: theft, assault)...")
-    table_df = filtered_df
+    
     if keyword:
-        table_df = table_df[table_df["crime"].str.contains(keyword, case=False, na=False)]
+        mask_search = filtered_df["crime"].astype(str).str.contains(keyword, case=False, na=False)
+        table_df = filtered_df[mask_search]
+    else:
+        table_df = filtered_df
 
     display_cols = [
         "report_number", "occurrence_date", "area", "crime_category", "crime",
         "victim_age", "victim_gender", "victim_ethnicity", "premise", "weapon", "status",
     ]
     
-    # PROTEKSI OUT OF MEMORY: Hanya render 5000 baris ke layar browser
+    # PROTEKSI OUT OF MEMORY: Hanya render 1000 baris ke layar browser
     st.dataframe(
-        table_df[display_cols].sort_values("occurrence_date", ascending=False).head(5000),
-        width="stretch", hide_index=True, height=400,
+        table_df[display_cols].sort_values("occurrence_date", ascending=False).head(1000),
+        use_container_width=True, hide_index=True, height=400,
     )
 
-    # Tetapi user tetap bisa mengunduh 100% datanya
     csv_bytes = to_csv_bytes(table_df[display_cols])
     st.download_button(
         "Unduh CSV (Full Data)", data=csv_bytes,
@@ -465,3 +450,6 @@ st.markdown(
     "</div>", 
     unsafe_allow_html=True
 )
+
+# Pembersihan memori sisa di akhir eksekusi
+gc.collect()
