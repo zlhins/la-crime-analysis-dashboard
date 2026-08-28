@@ -75,13 +75,14 @@ st.markdown(f"""
 # =============================================================================
 # 3. FUNGSI LOAD DATA (DIET MEMORI EKSTREM)
 # =============================================================================
-DATA_PATH = "data/la_crime_clean.parquet"
+DATA_PATH = "data/la_crime_clean.parquet" # Pastikan nama file sesuai dengan yang ada di folder data kamu
 
 @st.cache_data(show_spinner="Memuat dataset & optimasi memori...")
 def load_data(path: str = DATA_PATH) -> pd.DataFrame:
+    # Membaca file
     df = pd.read_parquet(path)
 
-    # 1. Konversi Tanggal dan Waktu (Downcast tipe data)
+    # Membuang memori yang tidak perlu dengan cara downcasting (memperkecil tipe data)
     if not pd.api.types.is_datetime64_any_dtype(df["occurrence_date"]):
         df["occurrence_date"] = pd.to_datetime(df["occurrence_date"], errors="coerce")
     
@@ -91,18 +92,29 @@ def load_data(path: str = DATA_PATH) -> pd.DataFrame:
         df["day_of_week"] = df["occurrence_date"].dt.day_name()
     if "hour" not in df.columns:
         df["occurrence_time"] = df["occurrence_time"].astype(str)
-        df["hour"] = df["occurrence_time"].str.extract(r'^(\d{1,2})')[0].astype(float)
+        df["hour"] = df["occurrence_time"].str.extract(r'^(\d{1,2})')[0].astype(float).fillna(-1).astype("int8")
 
-    df["is_arrest"] = df["status"].isin(["Adult Arrest", "Juv Arrest"])
-    df["victim_age"] = pd.to_numeric(df["victim_age"], errors="coerce").fillna(0).astype("int16")
+    # Mapping status satu kali di awal agar tidak memakan RAM saat filtering
+    status_map = {
+        "Invest Cont": "Investigasi Berjalan", "Adult Arrest": "Terselesaikan (Dewasa)",
+        "Adult Other": "Resolusi Lain (Dewasa)", "Juv Arrest": "Terselesaikan (Anak)",
+        "Juv Other": "Resolusi Lain (Anak)", "UNK": "Tidak Teridentifikasi",
+    }
+    df["status"] = df["status"].map(status_map).fillna(df["status"])
+    df["is_arrest"] = df["status"].isin(["Terselesaikan (Dewasa)", "Terselesaikan (Anak)"])
+    
+    df["victim_age"] = pd.to_numeric(df["victim_age"], errors="coerce").fillna(0).astype("int8")
     df["age_group"] = pd.cut(
         df["victim_age"],
         bins=[0, 10, 18, 25, 35, 45, 55, 65, 120],
         labels=["0-10", "11-18", "19-25", "26-35", "36-45", "46-55", "56-65", "65+"],
     )
     
-    # 2. OPTIMASI RAM: Ubah tipe data teks menjadi kategori
-    cat_cols = ["area", "crime_category", "crime", "victim_gender", "victim_ethnicity", "premise", "weapon", "status", "day_of_week"]
+    df["latitude"] = df["latitude"].astype("float32")
+    df["longitude"] = df["longitude"].astype("float32")
+    
+    # KUNCI UTAMA ANTI-OOM: Mengubah teks (string) menjadi Categorical
+    cat_cols = ["area", "crime_category", "crime", "victim_gender", "victim_ethnicity", "premise", "weapon", "status", "day_of_week", "age_group"]
     for col in cat_cols:
         if col in df.columns:
             df[col] = df[col].astype("category")
@@ -120,7 +132,7 @@ except FileNotFoundError:
     st.stop()
 
 # =============================================================================
-# 4. SIDEBAR — FILTER MENGGUNAKAN BOOLEAN MASKING (ANTI-COPY RAM)
+# 4. SIDEBAR — FILTER MENGGUNAKAN BOOLEAN MASKING
 # =============================================================================
 FILTER_KEYS = ["flt_year", "flt_area", "flt_category", "flt_days", "flt_hour", "flt_crimes"]
 
@@ -154,7 +166,7 @@ with st.sidebar:
     st.markdown("---")
     st.button("Reset Filter", use_container_width=True, on_click=reset_filters)
 
-# TEKNIK BOOLEAN MASKING: Filter tanpa menduplikasi data
+# ----------------- PENGAMAN MEMORI -----------------
 mask = pd.Series(True, index=df.index)
 
 if selected_year:
@@ -169,16 +181,11 @@ mask &= df["hour"].between(hour_range[0], hour_range[1])
 if selected_crimes:
     mask &= df["crime"].isin(selected_crimes)
 
-# Terapkan filter HANYA SEKALI
-filtered_df = df[mask]
-
-# Bersihkan memori sisa pembuatan mask
-del mask
-gc.collect()
+total_crimes = mask.sum()
 
 st.sidebar.caption(
-    f"SAMPEL DATA: **{len(filtered_df):,}** / **{len(df):,}** "
-    f"({(len(filtered_df) / len(df) * 100 if len(df) else 0):.1f}%)"
+    f"SAMPEL DATA: **{total_crimes:,}** / **{len(df):,}** "
+    f"({(total_crimes / len(df) * 100 if len(df) else 0):.1f}%)"
 )
 
 # =============================================================================
@@ -215,25 +222,24 @@ def section_intro(icon: str, title: str, caption: str = ""):
         st.markdown(f'<div class="section-caption">{caption}</div>', unsafe_allow_html=True)
 
 # =============================================================================
-# 7. KONTEN UTAMA
+# 7. KONTEN UTAMA - KALKULASI KPI (MENGGUNAKAN df.loc)
 # =============================================================================
-if filtered_df.empty:
+if total_crimes == 0:
     st.warning("Data tidak tersedia untuk parameter filter yang dipilih.")
     st.stop()
 
-total_crimes = len(filtered_df)
-serious_pct = (filtered_df["crime_category"] == "Serious Crime").mean() * 100
-arrest_pct = filtered_df["is_arrest"].mean() * 100
+serious_pct = (df.loc[mask, "crime_category"] == "Serious Crime").mean() * 100
+arrest_pct = df.loc[mask, "is_arrest"].mean() * 100
 
-crime_counts = filtered_df["crime"].value_counts()
+crime_counts = df.loc[mask, "crime"].value_counts()
 top_crime = crime_counts.index[0] if len(crime_counts) > 0 else "N/A"
 top_crime_n = crime_counts.iloc[0] if len(crime_counts) > 0 else 0
 
-area_counts = filtered_df["area"].value_counts()
+area_counts = df.loc[mask, "area"].value_counts()
 top_area = area_counts.index[0] if len(area_counts) > 0 else "N/A"
 top_area_n = area_counts.iloc[0] if len(area_counts) > 0 else 0
 
-avg_age = filtered_df["victim_age"].mean()
+avg_age = df.loc[mask, "victim_age"].mean()
 
 k1, k2, k3, k4, k5, k6 = st.columns(6)
 kpi_card(k1, "monitoring", "Total Insiden", f"{total_crimes:,}", color=PRIMARY)
@@ -263,7 +269,9 @@ with tab1:
 
     with col_chart1:
         section_intro("timeline", "Tren Tahunan")
-        trend_data = filtered_df.groupby("year").size().reset_index(name="count")
+        trend_data = df.loc[mask, "year"].value_counts().reset_index()
+        trend_data.columns = ["year", "count"]
+        trend_data = trend_data.sort_values("year")
         fig_trend = px.area(trend_data, x="year", y="count", markers=True, color_discrete_sequence=[PRIMARY])
         fig_trend.update_traces(line=dict(width=2), fillcolor="rgba(15, 23, 42, 0.05)")
         fig_trend.update_layout(xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), xaxis=dict(dtick=1), height=300)
@@ -271,7 +279,7 @@ with tab1:
 
     with col_chart2:
         section_intro("bar_chart", "Distribusi Area (Top 10)")
-        area_data = filtered_df["area"].value_counts().head(10).reset_index()
+        area_data = area_counts.head(10).reset_index()
         area_data.columns = ["area", "count"]
         fig_area = px.bar(area_data, x="count", y="area", orientation="h", color="count", color_continuous_scale="gray", text="count")
         fig_area.update_traces(texttemplate="%{text:,}", textposition="outside", marker_line_width=0)
@@ -279,24 +287,21 @@ with tab1:
         st.plotly_chart(fig_area, use_container_width=True)
 
     st.write("")
-    # PENTING: Sampel dikurangi jadi 1000 agar render peta tidak memakan RAM berlebih
-    section_intro("public", "Kepadatan Insiden Geospasial", "Heatmap distribusi (Maks 1.000 titik sampel agar peta tetap stabil)")
-    map_data = filtered_df.dropna(subset=["latitude", "longitude"])
+    section_intro("public", "Kepadatan Insiden Geospasial", "Heatmap distribusi. Diambil maks 1.000 sampel acak agar performa browser optimal.")
+    map_mask = mask & df["latitude"].notna()
+    
+    if map_mask.sum() > 0:
+        if map_mask.sum() > 1000:
+            sample_idx = df[map_mask].sample(1000, random_state=42).index
+            map_data = df.loc[sample_idx, ["latitude", "longitude"]]
+        else:
+            map_data = df.loc[map_mask, ["latitude", "longitude"]]
 
-    if not map_data.empty:
-        if len(map_data) > 1000:
-            map_data = map_data.sample(1000, random_state=42)
-
-        with st.spinner("Memuat peta spasial..."):
+        with st.spinner("Merender peta..."):
             m = folium.Map(location=[34.0522, -118.2437], zoom_start=10, tiles="OpenStreetMap")
-            heat_data = map_data[["latitude", "longitude"]].values.tolist()
+            heat_data = map_data.values.tolist()
             HeatMap(heat_data, radius=13, blur=12, gradient={0.4: PRIMARY, 0.65: WARNING, 1: DANGER}).add_to(m)
-            
             components.html(m._repr_html_(), height=450)
-            
-            # Bersihkan memori peta
-            del m, heat_data, map_data
-            gc.collect()
     else:
         st.info("Data koordinat tidak tersedia.")
 
@@ -307,7 +312,7 @@ with tab2:
 
     with col_time1:
         section_intro("schedule", "Distribusi Jam")
-        hour_data = filtered_df["hour"].dropna().value_counts().sort_index().reset_index()
+        hour_data = df.loc[mask & (df["hour"] >= 0), "hour"].value_counts().sort_index().reset_index()
         hour_data.columns = ["hour", "count"]
         fig_hour = px.bar(hour_data, x="hour", y="count", color="count", color_continuous_scale="Blues")
         fig_hour.update_layout(xaxis_title="Jam (00–23)", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
@@ -316,7 +321,7 @@ with tab2:
 
     with col_time2:
         section_intro("event", "Distribusi Hari")
-        day_data = (filtered_df["day_of_week"].value_counts().reindex(DAY_ORDER_EN).reset_index())
+        day_data = df.loc[mask, "day_of_week"].value_counts().reindex(DAY_ORDER_EN).reset_index()
         day_data.columns = ["day", "count"]
         day_data["day_id"] = day_data["day"].map(DAY_ID)
         fig_day = px.bar(day_data, x="day_id", y="count", color_discrete_sequence=[MUTED])
@@ -325,8 +330,10 @@ with tab2:
 
     st.write("")
     section_intro("grid_on", "Intensitas Waktu", "Matriks jam kejadian versus hari.")
-    pivot = filtered_df.pivot_table(index="day_of_week", columns="hour", values="report_number", aggfunc="count", fill_value=0).reindex(DAY_ORDER_EN)
+    pivot_subset = df.loc[mask & (df["hour"] >= 0), ["day_of_week", "hour", "report_number"]]
+    pivot = pivot_subset.pivot_table(index="day_of_week", columns="hour", values="report_number", aggfunc="count", fill_value=0).reindex(DAY_ORDER_EN)
     pivot.index = [DAY_ID[d] if d in DAY_ID else d for d in pivot.index]
+    
     fig_heat = px.imshow(pivot, color_continuous_scale="gray", aspect="auto", labels=dict(x="Jam", y="Hari", color="Insiden"))
     fig_heat.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
     st.plotly_chart(fig_heat, use_container_width=True)
@@ -338,12 +345,12 @@ with tab3:
 
     with col_demo1:
         section_intro("wc", "Gender")
-        gender_data = filtered_df[filtered_df["victim_gender"].isin(["Male", "Female"])]
-        gender_counts = gender_data["victim_gender"].value_counts().reset_index()
+        gender_mask = mask & df["victim_gender"].isin(["Male", "Female"])
+        gender_counts = df.loc[gender_mask, "victim_gender"].value_counts().reset_index()
         gender_counts.columns = ["gender", "count"]
         gender_counts["gender"] = gender_counts["gender"].map({"Male": "Pria", "Female": "Wanita"})
 
-        if not gender_counts.empty:
+        if not gender_counts.empty and gender_counts['count'].sum() > 0:
             fig_gender = px.pie(gender_counts, names="gender", values="count", hole=0.6, color_discrete_sequence=[PRIMARY, BORDER])
             fig_gender.update_traces(textinfo="percent", hoverinfo="label+value")
             fig_gender.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
@@ -353,7 +360,7 @@ with tab3:
 
     with col_demo2:
         section_intro("bar_chart_4_bars", "Kelompok Usia")
-        age_grp = filtered_df["age_group"].value_counts().reindex(["0-10", "11-18", "19-25", "26-35", "36-45", "46-55", "56-65", "65+"]).reset_index()
+        age_grp = df.loc[mask, "age_group"].value_counts().reindex(["0-10", "11-18", "19-25", "26-35", "36-45", "46-55", "56-65", "65+"]).reset_index()
         age_grp.columns = ["group", "count"]
         fig_age = px.bar(age_grp, x="group", y="count", color_discrete_sequence=[ACCENT])
         fig_age.update_layout(xaxis_title="Rentang Usia", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
@@ -361,9 +368,9 @@ with tab3:
 
     st.write("")
     section_intro("groups", "Profil Etnisitas (Top 10)")
-    eth_data = filtered_df["victim_ethnicity"].value_counts().reset_index()
+    eth_mask = mask & (df["victim_ethnicity"] != "Unknown")
+    eth_data = df.loc[eth_mask, "victim_ethnicity"].value_counts().head(10).reset_index()
     eth_data.columns = ["ethnicity", "count"]
-    eth_data = eth_data[eth_data["ethnicity"] != "Unknown"].head(10)
     
     fig_eth = px.bar(eth_data, x="count", y="ethnicity", orientation="h", color="count", color_continuous_scale="gray")
     fig_eth.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0), height=300)
@@ -378,23 +385,22 @@ with tab4:
 
     with col_w1:
         section_intro("hardware", "Instrumen Senjata (Top 10)")
-        weapon_data = filtered_df["weapon"].value_counts().reset_index()
-        weapon_data.columns = ["weapon", "count"]
         if hide_unknown_weapon:
-            weapon_data = weapon_data[~weapon_data["weapon"].astype(str).str.contains("UNKNOWN", case=False, na=False)]
+            valid_weapons = [w for w in df["weapon"].cat.categories if "UNKNOWN" not in str(w).upper()]
+            weapon_mask = mask & df["weapon"].isin(valid_weapons)
+        else:
+            weapon_mask = mask
             
-        fig_weapon = px.bar(weapon_data.head(10), x="count", y="weapon", orientation="h", color_discrete_sequence=[PRIMARY])
+        weapon_data = df.loc[weapon_mask, "weapon"].value_counts().head(10).reset_index()
+        weapon_data.columns = ["weapon", "count"]
+        
+        fig_weapon = px.bar(weapon_data, x="count", y="weapon", orientation="h", color_discrete_sequence=[PRIMARY])
         fig_weapon.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=320)
         st.plotly_chart(fig_weapon, use_container_width=True)
 
     with col_w2:
         section_intro("task_alt", "Status Resolusi")
-        status_map = {
-            "Invest Cont": "Investigasi Berjalan", "Adult Arrest": "Terselesaikan (Dewasa)",
-            "Adult Other": "Resolusi Lain (Dewasa)", "Juv Arrest": "Terselesaikan (Anak)",
-            "Juv Other": "Resolusi Lain (Anak)", "UNK": "Tidak Teridentifikasi",
-        }
-        status_data = filtered_df["status"].map(status_map).value_counts().reset_index()
+        status_data = df.loc[mask, "status"].value_counts().reset_index()
         status_data.columns = ["status", "count"]
         fig_status = px.pie(status_data, names="status", values="count", hole=0.6, color_discrete_sequence=SEQ_MIX)
         fig_status.update_layout(template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=320, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
@@ -402,7 +408,7 @@ with tab4:
 
     st.write("")
     section_intro("store", "Konteks Ruang (Premise)")
-    premise_data = filtered_df["premise"].value_counts().head(10).reset_index()
+    premise_data = df.loc[mask, "premise"].value_counts().head(10).reset_index()
     premise_data.columns = ["premise", "count"]
     fig_premise = px.bar(premise_data, x="count", y="premise", orientation="h", color_discrete_sequence=[MUTED])
     fig_premise.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="", yaxis_title="", template="plotly_white", margin=dict(l=0, r=0, t=10, b=0), height=300)
@@ -411,30 +417,30 @@ with tab4:
 # ------------------------- TAB 5: DATA TABEL --------------------------------
 with tab5:
     st.write("")
-    section_intro("dataset", "Eksplorasi Data Tabular", "Menampilkan data terbaru. Ketik di bawah ini untuk memfilter spesifik.")
+    section_intro("dataset", "Eksplorasi Data Tabular", "Menampilkan maksimal 2.000 baris terbaru. Gunakan tombol unduh untuk mendapatkan data lengkap.")
 
     keyword = st.text_input("Pencarian Modus:", placeholder="Ketik kata kunci (misal: theft, assault)...")
     
-    if keyword:
-        mask_search = filtered_df["crime"].astype(str).str.contains(keyword, case=False, na=False)
-        table_df = filtered_df[mask_search]
-    else:
-        table_df = filtered_df
-
     display_cols = [
         "report_number", "occurrence_date", "area", "crime_category", "crime",
         "victim_age", "victim_gender", "victim_ethnicity", "premise", "weapon", "status",
     ]
     
-    # PROTEKSI OUT OF MEMORY: Hanya render 1000 baris ke layar browser
+    if keyword:
+        kw_mask = mask & df["crime"].astype(str).str.contains(keyword, case=False, na=False)
+        table_df = df.loc[kw_mask, display_cols]
+    else:
+        table_df = df.loc[mask, display_cols]
+
     st.dataframe(
-        table_df[display_cols].sort_values("occurrence_date", ascending=False).head(1000),
+        table_df.head(2000), 
         use_container_width=True, hide_index=True, height=400,
     )
 
-    csv_bytes = to_csv_bytes(table_df[display_cols])
+    # Batasi unduhan CSV max 50.000 baris demi menjaga RAM server
+    csv_bytes = to_csv_bytes(table_df.head(50000))
     st.download_button(
-        "Unduh CSV (Full Data)", data=csv_bytes,
+        "Unduh CSV (Maks 50k baris)", data=csv_bytes,
         file_name="la_crime_export.csv", mime="text/csv",
         type="primary", icon=":material/download:"
     )
@@ -451,5 +457,5 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Pembersihan memori sisa di akhir eksekusi
+# Bersihkan sisa memori di akhir siklus render
 gc.collect()
